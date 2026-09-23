@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kundenservice Pro — Agent Console</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2330;--border:#2d3548;--text:#e6e9f2;--muted:#8b93ab;--accent:#3b82f6;--urgent:#f04747;--medium:#f5a623;--low:#3dd68c;}
+  html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;}
+  body{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:8px;}
+  .panel2{background:var(--panel2);}
+  ::-webkit-scrollbar{width:7px;} ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
+  .row{cursor:pointer;border-left:3px solid transparent;border-bottom:1px solid var(--border);}
+  .row:hover{background:var(--panel2);}
+  .row.active{background:var(--panel2);border-left-color:var(--accent);}
+  .badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;letter-spacing:.02em;}
+  .chip{font-size:11px;padding:1px 8px;border-radius:20px;border:1px solid var(--border);}
+  .msg-bubble{max-width:90%;border-radius:8px;padding:9px 13px;font-size:13px;line-height:1.5;white-space:pre-wrap;}
+  .msg-customer{background:var(--panel2);border:1px solid var(--border);}
+  .msg-agent{background:#1e3a6e;margin-left:auto;}
+  .msg-internal{background:#3a331c;border:1px dashed var(--medium);}
+  .sla-bar{height:4px;border-radius:2px;background:#2a3350;overflow:hidden;}
+  .sla-fill{height:100%;transition:width 1s linear,background .5s;}
+  textarea,select,input{resize:none;background:var(--panel2);border:1px solid var(--border);color:var(--text);}
+  select{background:var(--panel2);}
+  .kpi-card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 14px;}
+  .tab{padding:6px 12px;font-size:12px;cursor:pointer;border-bottom:2px solid transparent;color:var(--muted);}
+  .tab.active{color:var(--text);border-color:var(--accent);}
+</style>
+</head>
+<body class="min-h-screen">
+<div id="app"></div>
+<script>
+/* ---------- DATA MODEL ---------- */
+const PERSONAS = {
+  neutral:{name:"Standard",tone:"sachlich, höflich",escalate:"impatient"},
+  impatient:{name:"Ungeduldig",tone:"kurz angebunden, fordert Tempo",escalate:"angry",
+    opens:["Ich habe wenig Zeit, bitte kurz und präzise.","Bitte zügig bearbeiten, das zieht sich schon zu lange."],
+    escalation:["Das dauert deutlich zu lange, ich benötige jetzt eine klare Lösung.","Ich habe keine weitere Geduld für Verzögerungen."]},
+  angry:{name:"Verärgert",tone:"unzufrieden, testet Deeskalation",escalate:"angry",
+    opens:["Das ist bereits die dritte Rückmeldung zu diesem Thema, ohne Ergebnis.","Ich bin mit dem bisherigen Service sehr unzufrieden."],
+    escalation:["Diese Antwort ist für mich nicht akzeptabel.","Ich möchte, dass sich ein Vorgesetzter damit befasst."]},
+  confused:{name:"Unklar/Rückfragen",tone:"unvollständige Angaben, braucht Rückfragen",escalate:"impatient",
+    opens:["Ich bin mir nicht ganz sicher, was genau das Problem verursacht hat.","Können Sie mir den Sachverhalt bitte genauer erläutern?"],
+    escalation:["Das habe ich leider noch nicht vollständig verstanden.","Könnten Sie das bitte in einfacheren Worten erklären?"]},
+  demanding:{name:"Kompensationsforderung",tone:"fordert Entschädigung, Grenzen setzen nötig",escalate:"angry",
+    opens:["Für diesen Vorfall erwarte ich eine angemessene Kompensation.","Als langjähriger Kunde stehen mir hier Vorteile zu."],
+    escalation:["Das entspricht nicht meinen Erwartungen als Kunde.","Ich bestehe auf einer weitergehenden Lösung."]}
+};
+const CATEGORIES=["Technisch","Rechnung","Versand","Vertrag","Reklamation"];
+const PRIORITIES={Urgent:{label:"Dringend",color:"var(--urgent)",sla:180},Medium:{label:"Mittel",color:"var(--medium)",sla:300},Low:{label:"Niedrig",color:"var(--low)",sla:480}};
+const CHANNELS={email:{label:"E-Mail",icon:"✉️"},chat:{label:"Live-Chat",icon:"💬"},phone:{label:"Telefonnotiz",icon:"☎️"}};
+const OPENERS={
+  Technisch:["die Anwendung stürzt seit dem letzten Update wiederholt ab.","ich kann mich seit gestern nicht mehr in mein Konto einloggen."],
+  Rechnung:["auf der letzten Rechnung ist ein Betrag, den ich nicht nachvollziehen kann.","es wurde offenbar eine doppelte Abbuchung vorgenommen."],
+  Versand:["meine Bestellung ist laut Tracking seit drei Tagen unverändert 'in Bearbeitung'.","das gelieferte Paket kam beschädigt an."],
+  Vertrag:["ich möchte meinen Vertrag kündigen, finde aber keine passende Option.","ich habe Fragen zur automatischen Vertragsverlängerung."],
+  Reklamation:["das gelieferte Produkt entspricht nicht der Beschreibung.","ich bin mit der Servicequalität nicht zufrieden."]
+};
+const HINTS={
+  Technisch:"Fehler bestätigen, Details erfragen (Gerät/Version), konkreten nächsten Schritt nennen.",
+  Rechnung:"Für Unklarheit entschuldigen, Buchung erklären, Prüfung/Erstattung anbieten.",
+  Versand:"Problem bestätigen, Zeitrahmen nennen, Lösung (Ersatz/Erstattung) anbieten.",
+  Vertrag:"Kündigungsmodalitäten klar und höflich erklären, Fristen nennen.",
+  Reklamation:"Verständnis zeigen, entschuldigen, konkrete Wiedergutmachung anbieten."
+};
+const FIRST_NAMES=["Michael","Sabine","Thomas","Julia","Andreas","Claudia","Stefan","Nadine","Markus","Katrin"];
+const LAST_NAMES=["Weber","Schmidt","Hoffmann","Becker","Richter","Wolf","Neumann","Krüger","Schulz","Zimmermann"];
+const CONTRACTS=["Aktiv","Premium","Gekündigt"];
+
+let state={tickets:[],activeId:null,nextId:1,activeTab:'reply'};
+let sampleAPI=null;
+(async()=>{ try{ if(window.claude && window.claude.use){ sampleAPI = await window.claude.use('sample'); } }catch(e){} })();
+
+async function translateMessage(ticketId, idx){
+  const t=state.tickets.find(x=>x.id===ticketId); if(!t)return;
+  const m=t.messages[idx]; if(!m)return;
+  if(m.translation){ m.translation=null; render(); return; } // toggle off
+  if(!sampleAPI){ m.translation="⚠️ Përkthimi automatik nuk është i disponueshëm në këtë pamje."; render(); return; }
+  m.translating=true; render();
+  try{
+    const res=await sampleAPI(`Übersetze den folgenden deutschen Kundenservice-Text ins Albanische. Gib NUR die Übersetzung zurück, ohne Anführungszeichen, ohne Erklärung:\n\n${m.text}`);
+    m.translation=(res.text||'').trim();
+  }catch(e){ m.translation="⚠️ Përkthimi dështoi, provo përsëri."; }
+  m.translating=false; render();
+}
+function pick(a){return a[Math.floor(Math.random()*a.length)];}
+
+function makeCustomer(){
+  return {name:`${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`, id:`KD-${10000+Math.floor(Math.random()*89999)}`,
+    contract:pick(CONTRACTS), pastResolved:Math.floor(Math.random()*9)};
+}
+function makeTicket(){
+  const personaKeys=Object.keys(PERSONAS).filter(k=>k!=='neutral');
+  const personaKey=Math.random()<0.25?'neutral':pick(personaKeys);
+  const persona=PERSONAS[personaKey];
+  const cat=pick(CATEGORIES);
+  const priority=pick(Object.keys(PRIORITIES));
+  const r=Math.random(); const channel = r<0.5?'email':(r<0.85?'chat':'phone');
+  const opener=persona.opens?pick(persona.opens)+" ":"";
+  const detail=pick(OPENERS[cat]);
+  const minTurns=(personaKey==='confused'||personaKey==='demanding')?2:(Math.random()<0.5?2:1);
+  let firstMsg;
+  if(channel==='email') firstMsg=`Sehr geehrte Damen und Herren,\n\n${opener}${detail}\n\nMit freundlichen Grüßen`;
+  else if(channel==='chat') firstMsg=`${opener}${detail}`;
+  else firstMsg=`[Anruf-Transkript — Kunde am Telefon]\n"${opener}${detail}"`;
+  return {
+    id:state.nextId++, channel, persona:personaKey, category:cat, priority,
+    customer:makeCustomer(), subject:`${cat} · ${CHANNELS[channel].label}`,
+    workflowStatus:'In Bearbeitung', status:'open', failedAttempts:0,
+    turnsNeeded: channel==='phone'?1:minTurns, turnsDone:0,
+    slaTotal:PRIORITIES[priority].sla, slaRemaining:PRIORITIES[priority].sla,
+    createdAt:Date.now(), resolvedAt:null, score:null,
+    messages:[{role:'customer',text:firstMsg}], internalNotes:[]
+  };
+}
+function spawnTicket(){ if(state.tickets.filter(t=>t.status==='open').length>=8) return; state.tickets.unshift(makeTicket()); render(); }
+
+/* ---------- EVALUATION ---------- */
+function evaluateEmail(t){
+  const hasSie=/\bSie\b|\bIhnen\b|\bIhr\b/.test(t)&&!/\bdu\b|\bdich\b|\bdein\b/i.test(t);
+  const hasGreet=/(Sehr geehrte|Guten Tag)/i.test(t);
+  const hasClose=/(Mit freundlichen Grüßen|Freundliche Grüße)/i.test(t);
+  const long=t.trim().split(/\s+/).length>=20;
+  const missing=[]; if(!hasSie)missing.push("Sie-Form"); if(!hasGreet)missing.push("förmliche Anrede"); if(!hasClose)missing.push("förmlicher Gruß"); if(!long)missing.push("ausführlichere Antwort");
+  return {passed:missing.length===0,missing};
+}
+function evaluateChat(t){
+  const hasSie=/\bSie\b|\bIhnen\b|\bIhr\b/.test(t)&&!/\bdu\b|\bdich\b|\bdein\b/i.test(t);
+  const long=t.trim().split(/\s+/).length>=8;
+  const missing=[]; if(!hasSie)missing.push("Sie-Form"); if(!long)missing.push("konkretere Antwort");
+  return {passed:missing.length===0,missing};
+}
+function evaluatePhoneNote(t){
+  const long=t.trim().split(/\s+/).length>=15;
+  const hasResolution=/(zugesagt|vereinbart|Erstattung|Lösung|informiert|Rückruf|weitergeleitet)/i.test(t);
+  const thirdPerson=!/\bSie\b/.test(t)||/\bder Kunde\b|\bdie Kundin\b/i.test(t);
+  const missing=[]; if(!long)missing.push("ausführlichere Dokumentation"); if(!hasResolution)missing.push("klar dokumentiertes Ergebnis/Zusage"); if(!thirdPerson)missing.push("sachliche Notiz in dritter Person statt direkter Anrede");
+  return {passed:missing.length===0,missing};
+}
+function followUp(cat){
+  const m={Technisch:"Können Sie mir sagen, bis wann das konkret behoben ist?",Rechnung:"Wie lange dauert die Rückerstattung genau?",Versand:"Erhalte ich eine aktualisierte Sendungsverfolgung?",Vertrag:"Entstehen mir dabei zusätzliche Kosten?",Reklamation:"Was genau schlagen Sie als Wiedergutmachung vor?"};
+  return m[cat];
+}
+
+function submitReply(){
+  const t=state.tickets.find(x=>x.id===state.activeId);
+  if(!t||t.status!=='open')return;
+  const box=document.getElementById('replyBox'); const text=box.value.trim(); if(!text)return;
+  t.messages.push({role:'agent',text});
+  const res = t.channel==='email'?evaluateEmail(text):t.channel==='chat'?evaluateChat(text):evaluatePhoneNote(text);
+  t.lastEval=res;
+  if(res.passed){
+    t.turnsDone++;
+    if(t.turnsDone>=t.turnsNeeded || t.channel==='phone'){
+      t.messages.push({role:'customer',text: t.channel==='phone' ? "[Gespräch beendet — Kunde bestätigt Lösung]" : (t.channel==='email'? "Sehr geehrte Damen und Herren,\n\nvielen Dank für die Klärung. Damit ist mein Anliegen erledigt.\n\nMit freundlichen Grüßen":"Danke, das beantwortet meine Frage.")});
+      t.status='closed'; t.workflowStatus='Gelöst'; t.resolvedAt=Date.now(); t.score=t.failedAttempts===0?95:78;
+    } else {
+      t.messages.push({role:'customer',text: t.channel==='email'? `Sehr geehrte Damen und Herren,\n\n${followUp(t.category)}\n\nMit freundlichen Grüßen` : followUp(t.category)});
+      t.workflowStatus='Wartet auf Kunden';
+    }
+  } else {
+    t.failedAttempts++;
+    const p=PERSONAS[t.persona]; let nextP=t.persona;
+    if(Math.random()<0.5 && p.escalate) nextP=p.escalate;
+    t.persona=nextP;
+    t.messages.push({role:'customer',text:pick(PERSONAS[nextP].escalation||PERSONAS.angry.escalation)});
+  }
+  box.value=''; render();
+}
+function addInternalNote(){
+  const t=state.tickets.find(x=>x.id===state.activeId); if(!t)return;
+  const box=document.getElementById('noteBox'); const text=box.value.trim(); if(!text)return;
+  t.internalNotes.push({text,time:new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})});
+  box.value=''; render();
+}
+function escalateTicket(){
+  const t=state.tickets.find(x=>x.id===state.activeId); if(!t||t.status!=='open')return;
+  const box=document.getElementById('replyBox'); const text=box.value.trim();
+  if(!text){alert('Bitte zuerst eine Eskalationsbegründung im Antwortfeld formulieren.');return;}
+  t.internalNotes.push({text:`[ESKALATION AN TEAMLEITER] ${text}`,time:new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})});
+  t.status='closed'; t.workflowStatus='Eskaliert'; t.resolvedAt=Date.now(); t.score=null;
+  box.value=''; render();
+}
+function setWorkflowStatus(id,val){ const t=state.tickets.find(x=>x.id===id); if(t) t.workflowStatus=val; render(); }
+function setTab(tab){ state.activeTab=tab; render(); }
+function selectTicket(id){ state.activeId=id; state.activeTab='reply'; render(); }
+
+/* ---------- SLA TICK (lightweight — does not re-render whole page / does not wipe open text fields) ---------- */
+setInterval(()=>{
+  let breached=false;
+  state.tickets.forEach(t=>{
+    if(t.status==='open'){
+      t.slaRemaining--;
+      if(t.slaRemaining<=0){ t.status='breached'; t.workflowStatus='Eskaliert'; t.resolvedAt=Date.now(); breached=true; }
+    }
+  });
+  if(breached){ render(); return; } // full render only on a real status change
+  state.tickets.forEach(t=>{
+    if(t.status==='open'){
+      const txt=document.getElementById(`sla-txt-${t.id}`);
+      const fill=document.getElementById(`sla-fill-${t.id}`);
+      if(txt) txt.textContent=fmtTime(t.slaRemaining);
+      if(fill){ fill.style.width=Math.max(0,100*t.slaRemaining/t.slaTotal)+'%'; fill.style.background=slaColor(t); }
+    }
+  });
+},1000);
+setInterval(spawnTicket,30000);
+
+/* ---------- KPIs ---------- */
+function computeKPIs(){
+  const closed=state.tickets.filter(t=>t.resolvedAt);
+  const solvedProperly=state.tickets.filter(t=>t.workflowStatus==='Gelöst');
+  const ahtSec = closed.length? Math.round(closed.reduce((s,t)=>s+(t.resolvedAt-t.createdAt)/1000,0)/closed.length):0;
+  const fcr = solvedProperly.length? Math.round(100*solvedProperly.filter(t=>t.failedAttempts===0).length/solvedProperly.length):0;
+  const breached=state.tickets.filter(t=>t.status==='breached').length;
+  const slaCompliance = closed.length? Math.round(100*(closed.length-breached)/closed.length):100;
+  return {ahtSec,fcr,slaCompliance,active:state.tickets.filter(t=>t.status==='open').length};
+}
+function fmtTime(s){ if(s<0)s=0; const m=Math.floor(s/60),sec=s%60; return `${m}:${String(sec).padStart(2,'0')}`; }
+function slaColor(t){ if(t.status==='breached')return 'var(--urgent)'; const pct=t.slaRemaining/t.slaTotal; if(pct<0.25)return 'var(--urgent)'; if(pct<0.5)return 'var(--medium)'; return 'var(--low)'; }
+const STATUS_OPTS=["In Bearbeitung","Wartet auf Kunden","Gelöst","Eskaliert"];
+
+/* ---------- RENDER ---------- */
+function render(){
+  const app=document.getElementById('app');
+  // preserve any in-progress text + cursor focus so incoming tickets / status changes don't wipe what the agent is typing
+  const replyEl=document.getElementById('replyBox'), noteEl=document.getElementById('noteBox');
+  const savedReply=replyEl?replyEl.value:null, savedNote=noteEl?noteEl.value:null;
+  const focusedId=document.activeElement?document.activeElement.id:null;
+  const selStart=document.activeElement&&document.activeElement.selectionStart!=null?document.activeElement.selectionStart:null;
+
+  const active=state.tickets.find(t=>t.id===state.activeId);
+  const kpi=computeKPIs();
+  app.innerHTML=`
+  <div class="max-w-[1400px] mx-auto p-4">
+    <div class="flex items-center justify-between mb-3">
+      <div><h1 class="text-lg font-bold">Kundenservice Pro — Agent Console</h1>
+      <p class="text-xs" style="color:var(--muted)">Enterprise Ticketing Simulation · Geschäftssprache (Sie-Form, B2/C1)</p></div>
+      <a href="trajnim-10-kliente.html" class="text-xs px-3 py-1.5 rounded" style="border:1px solid var(--border);color:var(--muted);text-decoration:none">← Trajnimi</a>
+    </div>
+    <div class="grid grid-cols-4 gap-3 mb-4">
+      <div class="kpi-card"><div class="text-[11px]" style="color:var(--muted)">AHT (Ø Bearbeitungszeit)</div><div class="text-xl font-bold">${fmtTime(kpi.ahtSec)}</div></div>
+      <div class="kpi-card"><div class="text-[11px]" style="color:var(--muted)">First Contact Resolution</div><div class="text-xl font-bold">${kpi.fcr}%</div></div>
+      <div class="kpi-card"><div class="text-[11px]" style="color:var(--muted)">SLA Compliance Rate</div><div class="text-xl font-bold">${kpi.slaCompliance}%</div></div>
+      <div class="kpi-card"><div class="text-[11px]" style="color:var(--muted)">Aktive Tickets</div><div class="text-xl font-bold">${kpi.active}</div></div>
+    </div>
+
+    <div class="grid grid-cols-12 gap-4">
+      <div class="col-span-4 panel overflow-y-auto h-[72vh]">
+        <div class="text-[11px] uppercase px-3 py-2 border-b" style="color:var(--muted);border-color:var(--border)">Ticket-Warteschlange</div>
+        ${state.tickets.map(t=>{const pr=PRIORITIES[t.priority],ch=CHANNELS[t.channel];
+          return `<div class="row px-3 py-2 ${t.id===state.activeId?'active':''}" onclick="selectTicket(${t.id})">
+            <div class="flex justify-between items-center mb-1">
+              <span class="badge" style="background:${pr.color}22;color:${pr.color}">${pr.label}</span>
+              <span id="sla-txt-${t.id}" class="text-[10px]" style="color:var(--muted)">${t.status==='open'?fmtTime(t.slaRemaining):t.workflowStatus}</span>
+            </div>
+            <div class="text-[13px] font-medium">${ch.icon} ${t.subject}</div>
+            <div class="text-[11px]" style="color:var(--muted)">${t.customer.name} · ${t.customer.id}</div>
+            ${t.status==='open'?`<div class="sla-bar mt-1"><div id="sla-fill-${t.id}" class="sla-fill" style="width:${Math.max(0,100*t.slaRemaining/t.slaTotal)}%;background:${slaColor(t)}"></div></div>`:''}
+          </div>`;}).join('') || `<div class="p-4 text-sm" style="color:var(--muted)">Warte auf eingehende Tickets…</div>`}
+      </div>
+
+      <div class="col-span-5 panel p-4 h-[72vh] flex flex-col">
+        ${!active?`<div class="m-auto text-center" style="color:var(--muted)">Wählen Sie ein Ticket aus der Warteschlange.</div>`:`
+        <div class="flex justify-between items-start mb-2 pb-2 border-b" style="border-color:var(--border)">
+          <div><div class="font-semibold text-sm">${CHANNELS[active.channel].icon} ${active.subject}</div>
+          <div class="text-[11px]" style="color:var(--muted)">${PERSONAS[active.persona].name} · Ton: ${PERSONAS[active.persona].tone}</div></div>
+          <select onchange="setWorkflowStatus(${active.id},this.value)" class="text-[11px] rounded px-2 py-1">
+            ${STATUS_OPTS.map(o=>`<option ${o===active.workflowStatus?'selected':''}>${o}</option>`).join('')}
+          </select>
+        </div>
+        <div class="panel2 rounded p-2 mb-2 text-[11px]" style="border:1px dashed var(--border)">💡 Agenten-Hinweis: ${HINTS[active.category]}</div>
+        <div class="flex-1 overflow-y-auto space-y-2 py-1 pr-1">
+          ${active.messages.map((m,i)=>`<div class="msg-bubble ${m.role==='agent'?'msg-agent':'msg-customer'}">
+            <div class="text-[10px] mb-1 flex justify-between items-center" style="color:var(--muted)">
+              <span>${m.role==='agent'?'Sie (Agent)':'Kunde'}</span>
+              ${m.role==='customer'?`<button onclick="translateMessage(${active.id},${i})" class="text-[10px] px-2 py-0.5 rounded" style="background:var(--panel2);border:1px solid var(--border);color:var(--text)">${m.translating?'⏳ Duke përkthyer…':(m.translation?'🇦🇱 Fshih':'🌐 Shqip')}</button>`:''}
+            </div>
+            ${m.text.replace(/\n/g,'<br>')}
+            ${m.translation?`<div class="mt-2 pt-2 text-[12px] italic" style="border-top:1px dashed var(--border);color:#c9d4ff">🇦🇱 ${m.translation.replace(/\n/g,'<br>')}</div>`:''}
+          </div>`).join('')}
+          ${active.lastEval && !active.lastEval.passed ? `<div class="text-xs p-2 rounded" style="background:#3a1c1c;border:1px solid var(--urgent)">⚠️ Antwort unvollständig — fehlend: ${active.lastEval.missing.join(', ')}.</div>`:''}
+          ${active.status==='closed' && active.workflowStatus==='Gelöst' ? `<div class="text-xs p-2 rounded" style="background:#173a24;border:1px solid var(--low)">✅ Gelöst — Score: ${active.score}/100</div>`:''}
+          ${active.status==='closed' && active.workflowStatus==='Eskaliert' ? `<div class="text-xs p-2 rounded" style="background:#3a2f1c;border:1px solid var(--medium)">↗ An Teamleiter eskaliert</div>`:''}
+          ${active.status==='breached' ? `<div class="text-xs p-2 rounded" style="background:#3a1c1c;border:1px solid var(--urgent)">⛔ SLA-Frist abgelaufen.</div>`:''}
+        </div>
+        ${active.status==='open'?`
+        <div class="flex gap-2 mt-2 border-b" style="border-color:var(--border)">
+          <div class="tab ${state.activeTab==='reply'?'active':''}" onclick="setTab('reply')">${active.channel==='phone'?'Telefonnotiz':'Antwort'}</div>
+          <div class="tab ${state.activeTab==='note'?'active':''}" onclick="setTab('note')">Interne Notiz</div>
+        </div>
+        ${state.activeTab==='reply'?`
+        <textarea id="replyBox" rows="4" class="w-full rounded p-2 text-sm mt-2" placeholder="${active.channel==='phone'?'Gesprächsnotiz dokumentieren (sachlich, dritte Person)…':active.channel==='chat'?'Kurze, formelle Chat-Antwort…':'Förmliche E-Mail-Antwort (Sie-Form)…'}"></textarea>
+        <div class="flex justify-between mt-2">
+          <button onclick="escalateTicket()" class="px-3 py-1.5 rounded text-xs font-medium" style="background:#3a2f1c;border:1px solid var(--medium)">An Teamleiter eskalieren</button>
+          <button onclick="submitReply()" class="px-4 py-1.5 rounded text-xs font-medium" style="background:var(--accent)">Senden</button>
+        </div>`:`
+        <textarea id="noteBox" rows="4" class="w-full rounded p-2 text-sm mt-2" placeholder="Interne Notiz für Kollegen/Teamleiter (nicht sichtbar für Kunden)…"></textarea>
+        <div class="flex justify-end mt-2"><button onclick="addInternalNote()" class="px-4 py-1.5 rounded text-xs font-medium" style="background:var(--medium);color:#221a00">Notiz speichern</button></div>
+        ${active.internalNotes.length?`<div class="mt-2 space-y-1">${active.internalNotes.map(n=>`<div class="msg-bubble msg-internal text-xs"><span style="color:var(--muted)">${n.time}</span> — ${n.text}</div>`).join('')}</div>`:''}
+        `}`:''}
+        `}
+      </div>
+
+      <div class="col-span-3 panel p-4 h-[72vh] overflow-y-auto">
+        <div class="text-[11px] uppercase mb-2" style="color:var(--muted)">Kundendetails</div>
+        ${!active?`<div class="text-sm" style="color:var(--muted)">Kein Ticket ausgewählt.</div>`:`
+        <div class="space-y-2 text-sm">
+          <div><div class="text-[10px]" style="color:var(--muted)">Name</div><div class="font-medium">${active.customer.name}</div></div>
+          <div><div class="text-[10px]" style="color:var(--muted)">Kunden-ID</div><div class="font-mono">${active.customer.id}</div></div>
+          <div><div class="text-[10px]" style="color:var(--muted)">Vertragsstatus</div><span class="chip" style="color:${active.customer.contract==='Gekündigt'?'var(--urgent)':active.customer.contract==='Premium'?'var(--accent)':'var(--low)'}">${active.customer.contract}</span></div>
+          <div><div class="text-[10px]" style="color:var(--muted)">Ticket-Historie</div><div>${active.customer.pastResolved} Tickets diesen Monat gelöst</div></div>
+          <div><div class="text-[10px]" style="color:var(--muted)">Kanal</div><div>${CHANNELS[active.channel].icon} ${CHANNELS[active.channel].label}</div></div>
+          <div><div class="text-[10px]" style="color:var(--muted)">Kategorie</div><div>${active.category}</div></div>
+        </div>`}
+      </div>
+    </div>
+  </div>`;
+
+  // restore preserved text + focus after DOM rebuild
+  const newReply=document.getElementById('replyBox'), newNote=document.getElementById('noteBox');
+  if(newReply && savedReply!==null) newReply.value=savedReply;
+  if(newNote && savedNote!==null) newNote.value=savedNote;
+  if(focusedId){
+    const el=document.getElementById(focusedId);
+    if(el){ el.focus(); if(selStart!==null && el.setSelectionRange) el.setSelectionRange(selStart,selStart); }
+  }
+}
+spawnTicket(); spawnTicket(); render();
+</script>
+</body>
+</html>
